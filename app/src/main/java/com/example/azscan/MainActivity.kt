@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,6 +40,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import android.widget.Toast
 
 
 class MainActivity : ComponentActivity() {
@@ -58,19 +58,18 @@ class MainActivity : ComponentActivity() {
 // --- Telas para o menu ---
 sealed class Screen(val label: String) {
     object Home : Screen("Home")
-    object Settings : Screen("Configurações")
 }
 
 // --- Classe para resultado detalhado ---
-data class PredictionResult(
+data class ResultadoPrevisao(
     val normal: Float,
     val bronquite: Float,
     val pneumonia: Float
 )
 
 // --- Função para chamar API detalhada ---
-fun callPredictApiDetailed(audioBytes: ByteArray, onResult: (PredictionResult?) -> Unit) {
-    val client = OkHttpClient()
+fun chamarApiPrevisaoDetalhada(audioBytes: ByteArray, onResult: (ResultadoPrevisao?) -> Unit) {
+    val cliente = OkHttpClient()
     val audioBase64 = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
     val jsonBody = JSONObject().put("audio_base64", audioBase64).toString()
 
@@ -84,7 +83,7 @@ fun callPredictApiDetailed(audioBytes: ByteArray, onResult: (PredictionResult?) 
         .post(body)
         .build()
 
-    client.newCall(request).enqueue(object : Callback {
+    cliente.newCall(request).enqueue(object : Callback {
         override fun onFailure(call: Call, e: IOException) {
             e.printStackTrace()
             onResult(null)
@@ -108,13 +107,13 @@ fun callPredictApiDetailed(audioBytes: ByteArray, onResult: (PredictionResult?) 
                     // --- normaliza para soma 1.0 (100%) ---
                     val total = normal + bronquite + pneumonia
                     val normalized = if (total > 0f) {
-                        PredictionResult(
+                        ResultadoPrevisao(
                             normal = normal / total,
                             bronquite = bronquite / total,
                             pneumonia = pneumonia / total
                         )
                     } else {
-                        PredictionResult(0f, 0f, 0f)
+                        ResultadoPrevisao(0f, 0f, 0f)
                     }
 
                     onResult(normalized)
@@ -130,7 +129,7 @@ fun callPredictApiDetailed(audioBytes: ByteArray, onResult: (PredictionResult?) 
 
 // --- Barra de previsão para cada classe ---
 @Composable
-fun PredictionBar(label: String, value: Float) {
+fun BarraPrevisao(label: String, value: Float) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text("$label: ${(value * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
         Spacer(modifier = Modifier.height(4.dp))
@@ -153,8 +152,8 @@ fun PredictionBar(label: String, value: Float) {
 // --- Tela de resultado detalhado ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResultScreenDetailed(
-    prediction: PredictionResult,
+fun TelaResultadoDetalhado(
+    prediction: ResultadoPrevisao,
     onBack: () -> Unit
 ) {
     Scaffold(
@@ -179,9 +178,9 @@ fun ResultScreenDetailed(
         ) {
             Text("Resultado da Análise", style = MaterialTheme.typography.headlineMedium)
 
-            PredictionBar("Normal", prediction.normal)
-            PredictionBar("Bronquite", prediction.bronquite)
-            PredictionBar("Pneumonia", prediction.pneumonia)
+            BarraPrevisao("Normal", prediction.normal)
+            BarraPrevisao("Bronquite", prediction.bronquite)
+            BarraPrevisao("Pneumonia", prediction.pneumonia)
 
             Spacer(modifier = Modifier.height(16.dp))
             Text(
@@ -206,7 +205,7 @@ fun AppScreen() {
     var selectedScreen by remember { mutableStateOf<Screen>(Screen.Home) }
     var soundCaptured by remember { mutableStateOf(false) }
     var recordedAudio by remember { mutableStateOf<ByteArray?>(null) }
-    var currentPrediction by remember { mutableStateOf<PredictionResult?>(null) }
+    var currentPrediction by remember { mutableStateOf<ResultadoPrevisao?>(null) }
 
     val scope = rememberCoroutineScope()
 
@@ -220,12 +219,6 @@ fun AppScreen() {
                         icon = { Icon(Icons.Default.Mic, contentDescription = "Home") },
                         label = { Text("Home") }
                     )
-                    NavigationBarItem(
-                        selected = selectedScreen is Screen.Settings,
-                        onClick = { selectedScreen = Screen.Settings },
-                        icon = { Icon(Icons.Default.Settings, contentDescription = "Configurações") },
-                        label = { Text("Configurações") }
-                    )
                 }
             }
         },
@@ -233,7 +226,7 @@ fun AppScreen() {
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (showResult && currentPrediction != null) {
-                ResultScreenDetailed(
+                TelaResultadoDetalhado(
                     prediction = currentPrediction!!,
                     onBack = { showResult = false }
                 )
@@ -243,11 +236,9 @@ fun AppScreen() {
                         HomeScreen(
                             onFinishRecording = { /* antigo resultado Alta/Média */ },
                             onSoundCaptured = { soundCaptured = true },
+                            onSoundCapturedFalse = { soundCaptured = false },
                             onAudioCaptured = { audio -> recordedAudio = audio }
                         )
-                    }
-                    is Screen.Settings -> {
-                        SettingsScreen()
                     }
                 }
             }
@@ -255,18 +246,18 @@ fun AppScreen() {
             if (soundCaptured) {
                 var isProcessing by remember { mutableStateOf(false) }
 
-                SoundCapturedDialog(
+                DialogoCaputaraSom(
                     isProcessing = isProcessing,
                     onAnalyze = {
                         isProcessing = true
                         recordedAudio?.let { audio ->
-                            callPredictApiDetailed(audio) { result ->
+                            chamarApiPrevisaoDetalhada(audio) { result ->
                                 scope.launch(Dispatchers.Main) {
                                     if (result != null) {
                                         currentPrediction = result
                                         showResult = true
                                     } else {
-                                        currentPrediction = PredictionResult(0f, 0f, 0f)
+                                        currentPrediction = ResultadoPrevisao(0f, 0f, 0f)
                                         showResult = true
                                     }
                                     soundCaptured = false
@@ -291,6 +282,7 @@ fun AppScreen() {
 fun HomeScreen(
     onFinishRecording: () -> Unit,
     onSoundCaptured: () -> Unit,
+    onSoundCapturedFalse: () -> Unit,
     onAudioCaptured: (ByteArray) -> Unit
 ) {
     val context = LocalContext.current
@@ -326,12 +318,22 @@ fun HomeScreen(
         )
         Spacer(modifier = Modifier.height(32.dp))
 
-        RecordButton(
+        BotaoGravacao(
             permissionGranted = permissionGranted,
             onRequestPermission = { launcher.launch(Manifest.permission.RECORD_AUDIO) },
             onStopRecording = onFinishRecording,
             onSoundDetected = onSoundCaptured,
-            onAudioCaptured = onAudioCaptured
+            onAudioCaptured = { audio ->
+                if (audio == null) {
+                    // Nenhuma tosse detectada: apenas mostra Toast
+                    Toast.makeText(context, "Nenhuma tosse detectada. Por favor, tente novamente.", Toast.LENGTH_SHORT).show()
+                    onSoundCapturedFalse() // chamando função para definir falso
+                } else {
+                    // Som detectado: atualiza pai e mostra dialog
+                    onAudioCaptured(audio)
+                    onSoundCaptured()  // apenas aqui!
+                }
+            }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -344,25 +346,28 @@ fun HomeScreen(
 
 // --- Botão de gravação com barra animada e detecção de som ---
 @Composable
-fun RecordButton(
+fun BotaoGravacao(
     permissionGranted: Boolean,
     onRequestPermission: () -> Unit,
     onStopRecording: () -> Unit,
     onSoundDetected: () -> Unit,
-    onAudioCaptured: (ByteArray) -> Unit
+    onAudioCaptured: (ByteArray?) -> Unit
 ) {
     var isRecording by remember { mutableStateOf(false) }
     var amplitude by remember { mutableStateOf(0f) }
-
     val scope = rememberCoroutineScope()
     val recorderState = remember { mutableStateOf<AudioRecord?>(null) }
     val recordedBuffer = remember { mutableStateListOf<Short>() }
+    val showNoCoughDialog = remember { mutableStateOf(false) }
+
+    val context = LocalContext.current // garante context válido
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        // --- Botão Gravar / Stop ---
         Button(
             onClick = {
+                // --- Verifica permissão ---
                 if (!permissionGranted) {
+                    Toast.makeText(context, "Permissão de microfone necessária.", Toast.LENGTH_SHORT).show()
                     onRequestPermission()
                     return@Button
                 }
@@ -370,6 +375,7 @@ fun RecordButton(
                 if (!isRecording) {
                     isRecording = true
                     recordedBuffer.clear()
+                    var coughDetected = false
                     val sampleRate = 16000
                     val bufferSize = AudioRecord.getMinBufferSize(
                         sampleRate,
@@ -390,77 +396,82 @@ fun RecordButton(
                             throw IllegalStateException("AudioRecord não pôde ser inicializado")
                         }
 
-                        // ATIVA SUPRESSÃO DE RUÍDO
                         if (NoiseSuppressor.isAvailable()) {
                             NoiseSuppressor.create(recorder.audioSessionId)
                         }
 
                         recorderState.value = recorder
                         recorder.startRecording()
+                    } catch (e: SecurityException) {
+                        e.printStackTrace()
+                        Toast.makeText(context, "Permissão de microfone negada.", Toast.LENGTH_SHORT).show()
+                        isRecording = false
+                        return@Button
                     } catch (e: Exception) {
                         e.printStackTrace()
                         isRecording = false
+                        return@Button
                     }
 
-
-                    // --- Coroutine para ler o áudio ---
+                    // --- Gravação em coroutine ---
                     scope.launch(Dispatchers.IO) {
                         val buffer = ShortArray(bufferSize)
-                        val MAX_SAMPLES = 320000  // 20 segundos
+                        val MAX_SAMPLES = 320000
 
                         while (isRecording && recordedBuffer.size < MAX_SAMPLES) {
-                            try {
-                                val read = recorderState.value?.read(buffer, 0, buffer.size) ?: 0
-                                if (read > 0) {
-                                    recordedBuffer.addAll(buffer.take(read))
-                                    val max = buffer.take(read).maxOrNull() ?: 0
-                                    val normalized = max.toFloat() / 32768f
-                                    withContext(Dispatchers.Main) {
-                                        amplitude = normalized.coerceIn(0f, 1f)
-                                    }
+                            val read = recorderState.value?.read(buffer, 0, buffer.size) ?: 0
+                            if (read > 0) {
+                                recordedBuffer.addAll(buffer.take(read))
+                                val max = buffer.take(read).maxOrNull() ?: 0
+                                val normalized = max.toFloat() / 32768f
+
+                                if (normalized > 0.1f) {
+                                    coughDetected = true
                                 }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
+
+                                withContext(Dispatchers.Main) {
+                                    amplitude = normalized.coerceIn(0f, 1f)
+                                }
                             }
                         }
 
-                        // --- Stop automático quando atinge 20s ---
                         withContext(Dispatchers.Main) {
                             try {
                                 recorderState.value?.stop()
                                 recorderState.value?.release()
                                 recorderState.value = null
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
+                            } catch (e: Exception) { e.printStackTrace() }
+
                             isRecording = false
                             amplitude = 0f
                             onSoundDetected()
 
-                            // Converte para ByteArray
-                            val shortArray = if (recordedBuffer.size < MAX_SAMPLES) {
-                                recordedBuffer.toShortArray() + ShortArray(MAX_SAMPLES - recordedBuffer.size)
-                            } else {
-                                recordedBuffer.take(MAX_SAMPLES).toShortArray()
-                            }
+                            if (coughDetected) {
+                                val shortArray = if (recordedBuffer.size < MAX_SAMPLES) {
+                                    recordedBuffer.toShortArray() + ShortArray(MAX_SAMPLES - recordedBuffer.size)
+                                } else {
+                                    recordedBuffer.take(MAX_SAMPLES).toShortArray()
+                                }
 
-                            val byteBuffer = ByteBuffer.allocate(MAX_SAMPLES * 2)
-                                .order(ByteOrder.LITTLE_ENDIAN)
-                            shortArray.forEach { s -> byteBuffer.putShort(s) }
-                            onAudioCaptured(byteBuffer.array())
+                                val byteBuffer = ByteBuffer.allocate(MAX_SAMPLES * 2)
+                                    .order(ByteOrder.LITTLE_ENDIAN)
+                                shortArray.forEach { s -> byteBuffer.putShort(s) }
+                                onAudioCaptured(byteBuffer.array())
+                            } else {
+                                onAudioCaptured(null)
+                                showNoCoughDialog.value = true
+                            }
                         }
                     }
 
                 } else {
-                    // --- Stop manual ---
+                    // Stop manual
                     isRecording = false
                     try {
                         recorderState.value?.stop()
                         recorderState.value?.release()
                         recorderState.value = null
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
+                    } catch (e: Exception) { e.printStackTrace() }
                     amplitude = 0f
                     onStopRecording()
                 }
@@ -481,7 +492,6 @@ fun RecordButton(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // --- Barra de volume ---
         if (isRecording) {
             Box(
                 modifier = Modifier
@@ -498,66 +508,86 @@ fun RecordButton(
             }
         }
     }
+
+    if (showNoCoughDialog.value) {
+        AlertDialog(
+            onDismissRequest = { showNoCoughDialog.value = false },
+            title = { Text("Nenhuma tosse detectada") },
+            text = { Text("Não foi capturado nenhum som de tosse. Tente novamente.") },
+            confirmButton = {
+                Button(
+                    onClick = { showNoCoughDialog.value = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("OK") }
+            }
+        )
+    }
 }
 
-
 // --- Dialog central de som capturado ---
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SoundCapturedDialog(
+fun DialogoCaputaraSom(
     onAnalyze: () -> Unit,
     onRepeat: () -> Unit,
     isProcessing: Boolean = false
 ) {
     AlertDialog(
         onDismissRequest = { },
-        title = { Text("Som Capturado") },
+        title = {
+            Text(
+                text = "Som Capturado",
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
         text = {
             Column(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text("Deseja analisar o resultado ou repetir a gravação?")
+                Text(
+                    "Deseja analisar o resultado ou repetir a gravação?",
+                    textAlign = TextAlign.Center
+                )
+
                 if (isProcessing) {
-                    CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(48.dp)
+                    )
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = onAnalyze,
-                enabled = !isProcessing
-            ) { Text("Analisar resultado") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Button(
+                    onClick = onAnalyze,
+                    enabled = !isProcessing,
+                    modifier = Modifier.fillMaxWidth(0.7f)
+                ) {
+                    Text("Analisar resultado")
+                }
+            }
         },
         dismissButton = {
-            Button(
-                onClick = onRepeat,
-                enabled = !isProcessing
-            ) { Text("Repetir gravação") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                OutlinedButton(
+                    onClick = onRepeat,
+                    enabled = !isProcessing,
+                    modifier = Modifier.fillMaxWidth(0.7f)
+                ) {
+                    Text("Repetir gravação")
+                }
+            }
         }
     )
-}
-
-
-// --- Tela de configurações ---
-@Composable
-fun SettingsScreen() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Configurações",
-            style = MaterialTheme.typography.headlineLarge
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "Aqui você poderá adicionar configurações futuras.",
-            textAlign = TextAlign.Center
-        )
-    }
 }
 
 @Preview(showBackground = true)
